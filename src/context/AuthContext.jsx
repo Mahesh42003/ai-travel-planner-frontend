@@ -48,9 +48,10 @@ export function AuthProvider({ children }) {
 
   async function register(name, email, password) {
     try {
-  const response = await axios.post('/auth/register', userData);
-  
-} catch (error) {
+      const { data } = await api.post('/auth/register', { name, email, password });
+      persistSession(data);
+      return { ok: true };
+    } catch (error) {
   if (error.response && error.response.status === 409) {
     alert("This email is already registered. Please try logging in or use a different email.");
   } else {
