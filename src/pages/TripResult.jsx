@@ -1,0 +1,215 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import api, { extractErrorMessage } from '../api/client';
+import DayCard from '../components/DayCard';
+import BudgetStub from '../components/BudgetStub';
+import HotelCard from '../components/HotelCard';
+import PackingList from '../components/PackingList';
+
+export default function TripResult() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+
+  const [trip, setTrip] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [busyDay, setBusyDay] = useState(null); // dayNumber currently being mutated
+  const [packingBusy, setPackingBusy] = useState(false);
+
+  const loadTrip = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data } = await api.get(`/trips/${id}`);
+      setTrip(data);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Could not load this trip.'));
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    loadTrip();
+  }, [loadTrip]);
+
+  async function handleAddActivity(dayNumber, activity) {
+    setBusyDay(dayNumber);
+    setError('');
+    try {
+      const { data } = await api.post(`/trips/${id}/days/${dayNumber}/activities`, activity);
+      setTrip(data);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Could not add that activity.'));
+    } finally {
+      setBusyDay(null);
+    }
+  }
+
+  async function handleRemoveActivity(dayNumber, activityId) {
+    setBusyDay(dayNumber);
+    setError('');
+    try {
+      const { data } = await api.delete(`/trips/${id}/days/${dayNumber}/activities/${activityId}`);
+      setTrip(data);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Could not remove that activity.'));
+    } finally {
+      setBusyDay(null);
+    }
+  }
+
+  async function handleDeleteDay(dayNumber) {
+    if (!window.confirm(`Delete Day ${dayNumber} from this itinerary?`)) return;
+    setBusyDay(dayNumber);
+    setError('');
+    try {
+      const { data } = await api.delete(`/trips/${id}/days/${dayNumber}`);
+      setTrip(data);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Could not delete that day.'));
+    } finally {
+      setBusyDay(null);
+    }
+  }
+
+  async function handleRegenerateDay(dayNumber, hint) {
+    setBusyDay(dayNumber);
+    setError('');
+    try {
+      const { data } = await api.post(`/trips/${id}/days/${dayNumber}/regenerate`, { hint });
+      setTrip(data);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Could not regenerate that day.'));
+    } finally {
+      setBusyDay(null);
+    }
+  }
+
+  async function handleTogglePacking(itemId, isPacked) {
+    // Optimistic update so the checkbox feels instant.
+    setTrip((prev) => ({
+      ...prev,
+      packingList: prev.packingList.map((p) => (p._id === itemId ? { ...p, isPacked } : p)),
+    }));
+    try {
+      await api.patch(`/trips/${id}/packing/${itemId}`, { isPacked });
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Could not update that item.'));
+      loadTrip(); // resync on failure
+    }
+  }
+
+  async function handleRegeneratePacking() {
+    setPackingBusy(true);
+    setError('');
+    try {
+      const { data } = await api.post(`/trips/${id}/packing/regenerate`);
+      setTrip(data);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Could not regenerate the packing list.'));
+    } finally {
+      setPackingBusy(false);
+    }
+  }
+
+  async function handleDeleteTrip() {
+    if (!window.confirm('Delete this entire trip? This cannot be undone.')) return;
+    try {
+      await api.delete(`/trips/${id}`);
+      navigate('/dashboard');
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Could not delete this trip.'));
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="screen">
+        <p className="eyebrow">Loading itinerary…</p>
+      </div>
+    );
+  }
+
+  if (!trip) {
+    return (
+      <div className="screen">
+        {error && <div className="error-banner">{error}</div>}
+        <div className="empty-state">
+          <div className="big">✈️</div>
+          <p>We couldn't find that trip.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="screen">
+      <div className="dash-head">
+        <div>
+          <div className="eyebrow">{trip.budgetTier} budget · {trip.durationDays} days</div>
+          <h1 style={{ margin: '6px 0 0', fontSize: 26 }}>{trip.destination}</h1>
+        </div>
+        <button className="btn btn-ghost" onClick={handleDeleteTrip}>
+          Delete trip
+        </button>
+      </div>
+
+      {error && <div className="error-banner">{error}</div>}
+
+      {trip.generatedBy === 'fallback' && (
+        <div className="ai-banner">
+          <span className="dotpulse"></span> Generated by the offline fallback planner (no Gemini API key configured) —
+          still fully editable below.
+        </div>
+      )}
+
+      <div className="result-wrap">
+        <div>
+          <div className="section-label">
+            <h2 style={{ fontSize: 16, margin: 0 }}>Day-by-day itinerary</h2>
+            <span className="line"></span>
+          </div>
+          <div className="day-rail">
+            {trip.itinerary.map((day) => (
+              <DayCard
+                key={day.dayNumber}
+                day={day}
+                busy={busyDay === day.dayNumber}
+                onAddActivity={handleAddActivity}
+                onRemoveActivity={handleRemoveActivity}
+                onDeleteDay={handleDeleteDay}
+                onRegenerateDay={handleRegenerateDay}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div className="section-label">
+            <h2 style={{ fontSize: 16, margin: 0 }}>Budget</h2>
+            <span className="line"></span>
+          </div>
+          <BudgetStub budget={trip.estimatedBudget} />
+
+          <div className="section-label">
+            <h2 style={{ fontSize: 16, margin: 0 }}>Recommended hotels</h2>
+            <span className="line"></span>
+          </div>
+          {trip.hotels.map((hotel, idx) => (
+            <HotelCard hotel={hotel} key={idx} />
+          ))}
+
+          <div style={{ marginTop: 24 }}>
+            <PackingList
+              items={trip.packingList}
+              onToggle={handleTogglePacking}
+              onRegenerate={handleRegeneratePacking}
+              regenerating={packingBusy}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
